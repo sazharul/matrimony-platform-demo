@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Generate matriconnect_backend/database/data/options/locations/bangladesh.json
+ * Generate matriconnect backend/database/data/options/locations/bangladesh.json
  * from Open Admin Data hierarchy (CC-BY-4.0).
  *
  * Source: https://github.com/open-admin-data/bangladesh-administrative-divisions

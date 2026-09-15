@@ -159,9 +159,13 @@ export default async function Footer({settings}: FooterProps) {
                 </div>
 
                 <div
-                    className="mt-10 pt-6 flex justify-center text-gray-400 font-medium text-xs"
+                    className="mt-10 pt-6 flex flex-col items-center gap-2 text-gray-400 font-medium text-xs text-center"
                     style={{borderTop: '1px solid rgba(255,255,255,0.08)'}}
                 >
+                    <p className="text-amber-200/80">
+                        <strong>Portfolio demo</strong> — Independent showcase for hiring. Not affiliated with any client or live product. Fictional data only.{' '}
+                        <a href="https://azharulislamsohan.com/legal" className="underline hover:text-white" target="_blank" rel="noreferrer">Legal notice</a>
+                    </p>
                     <p>© {currentYear} {settings.site_name}. All rights reserved.</p>
                 </div>
             </div>

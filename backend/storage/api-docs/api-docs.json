@@ -4,7 +4,7 @@
         "title": "MatriConnect Matrimony API",
         "description": "Full-stack matrimony platform API. All protected endpoints require Bearer token from Sanctum.",
         "contact": {
-            "email": "admin@matriconnect.com"
+            "email": "admin@matriconnect.demo"
         },
         "license": {
             "name": "MIT"
