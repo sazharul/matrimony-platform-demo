@@ -1,8 +1,13 @@
 # MatriConnect — Matrimony Platform Demo
 
-A full-stack matrimonial platform demo built with **Laravel 12** and **Next.js 16**. This is a sanitized, open-source recreation for portfolio and local review.
+A full-stack matrimonial platform demo built with **Laravel 12** and **Next.js 16**. Rebranded as **MatriConnect** for portfolio review.
 
-> **Disclaimer:** This is a portfolio recreation and is not affiliated with [My Bouma](https://mybouma.com/). The production client site is at [mybouma.com](https://mybouma.com/).
+> **Portfolio demonstration only.** This repository is an independent showcase for recruiters and engineers.
+> It uses the same technologies and architectural patterns from my production work, but it is **not**
+> the source code of any client, employer, or live product. Fictional branding and synthetic data only.
+> See [DISCLAIMER.md](DISCLAIMER.md).
+>
+> Production experience reference: [mybouma.com](https://mybouma.com/) (code not published).
 
 ## Features
 
