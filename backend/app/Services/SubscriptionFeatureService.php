@@ -1,0 +1,311 @@
+<?php
+
+namespace App\Services;
+
+use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
+use App\Models\User;
+use Illuminate\Support\Facades\Cache;
+
+/**
+ * SubscriptionFeatureService
+ *
+ * Single source of truth for all subscription feature definitions and
+ * per-user feature access resolution.
+ *
+ * Usage:
+ *   $svc = app(SubscriptionFeatureService::class);
+ *   $svc->can($user, 'chat_access')          → bool
+ *   $svc->value($user, 'daily_matches')       → int|bool|string
+ *   $svc->withinDailyLimit($user, 'send_interest_per_day', $usedToday) → bool
+ *   $svc->withinMonthlyLimit($user, 'send_interest_per_day', $usedMonth) → bool
+ */
+class SubscriptionFeatureService
+{
+    // -----------------------------------------------------------------------
+    // Feature Definitions
+    // -----------------------------------------------------------------------
+
+    /**
+     * Complete definition of every subscription feature.
+     *
+     * Types:
+     *  - bool   : on/off toggle
+     *  - qty    : numeric limit (0 = disabled)
+     *  - enum   : one of a fixed set of string values
+     *
+     * 'period' (for qty): 'day' | 'month' | null (no reset)
+     * 'default' : value for free/no-plan users
+     *
+     * @return array<string, array{type: string, default: mixed, label: string, group: string, period?: string|null, options?: string[]}>
+     */
+    public static function definitions(): array
+    {
+        return [
+            // ── Discovery & Search ──────────────────────────────────────────
+            'daily_matches' => [
+                'type'    => 'qty',
+                'period'  => 'day',
+                'default' => 5,
+                'label'   => 'Daily Match Suggestions',
+                'group'   => 'Discovery & Search',
+            ],
+            'profile_views_per_day' => [
+                'type'    => 'qty',
+                'period'  => 'day',
+                'default' => 10,
+                'label'   => 'Profile Views per Day',
+                'group'   => 'Discovery & Search',
+            ],
+
+            // ── Communication ───────────────────────────────────────────────
+            'send_interest_per_day' => [
+                'type'    => 'qty',
+                'period'  => 'day',
+                'default' => 3,
+                'label'   => 'Interests Sent per Day',
+                'group'   => 'Communication',
+            ],
+            'chat_access' => [
+                'type'    => 'bool',
+                'default' => false,
+                'label'   => 'Chat Access',
+                'group'   => 'Communication',
+            ],
+            'audio_call_access' => [
+                'type'    => 'bool',
+                'default' => false,
+                'label'   => 'Audio Call Access',
+                'group'   => 'Communication',
+            ],
+            'video_call_access' => [
+                'type'    => 'bool',
+                'default' => false,
+                'label'   => 'Video Call Access',
+                'group'   => 'Communication',
+            ],
+
+            // ── Visibility & Insights ────────────────────────────────────────
+            'see_who_viewed_profile' => [
+                'type'    => 'bool',
+                'default' => false,
+                'label'   => 'See Who Viewed Your Profile',
+                'group'   => 'Visibility & Insights',
+            ],
+
+            // ── Photos & Privacy ─────────────────────────────────────────────
+            'max_photos_upload' => [
+                'type'    => 'qty',
+                'period'  => null,
+                'default' => 3,
+                'label'   => 'Max Photos Allowed to Upload',
+                'group'   => 'Photos & Privacy',
+            ],
+
+            // ── Notifications ────────────────────────────────────────────────
+            'push_notifications' => [
+                'type'    => 'bool',
+                'default' => true,
+                'label'   => 'Browser / App Push Notifications',
+                'group'   => 'Notifications',
+            ],
+            'email_digest_frequency' => [
+                'type'    => 'enum',
+                'default' => 'none',
+                'label'   => 'Daily Match Digest Email',
+                'group'   => 'Notifications',
+                'options' => ['none', 'daily', 'weekly'],
+            ],
+        ];
+    }
+
+    /**
+     * Feature metadata for public pricing UI (labels + types from admin definitions).
+     *
+     * @return array<string, array{label: string, type: string, period?: string|null}>
+     */
+    public static function publicDefinitions(): array
+    {
+        $out = [];
+        foreach (self::definitions() as $key => $def) {
+            $out[$key] = [
+                'label'  => $def['label'],
+                'type'   => $def['type'],
+                'period' => $def['period'] ?? null,
+            ];
+        }
+
+        return $out;
+    }
+
+    /**
+     * Return all feature definitions grouped by 'group'.
+     *
+     * @return array<string, array<string, array>>
+     */
+    public static function groupedDefinitions(): array
+    {
+        $groups = [];
+        foreach (self::definitions() as $key => $def) {
+            $groups[$def['group']][$key] = $def;
+        }
+        return $groups;
+    }
+
+    // -----------------------------------------------------------------------
+    // Runtime Helpers
+    // -----------------------------------------------------------------------
+
+    /**
+     * Get the active plan features for the user (with defaults for unset keys).
+     *
+     * @return array<string, mixed>
+     */
+    public function getPlanFeatures(User $user): array
+    {
+        $defs    = self::definitions();
+        $plan    = $this->getActivePlan($user);
+        $stored  = $plan ? ($plan->features ?? []) : [];
+
+        $resolved = [];
+        foreach ($defs as $key => $def) {
+            $resolved[$key] = array_key_exists($key, $stored) ? $stored[$key] : $def['default'];
+        }
+
+        return $resolved;
+    }
+
+    /**
+     * Get a single feature value for the user.
+     */
+    public function value(User $user, string $key): mixed
+    {
+        $plan   = $this->getActivePlan($user);
+        $stored = $plan ? ($plan->features ?? []) : [];
+        $defs   = self::definitions();
+
+        if (array_key_exists($key, $stored)) {
+            return $stored[$key];
+        }
+
+        return $defs[$key]['default'] ?? null;
+    }
+
+    /**
+     * Check boolean feature access.
+     */
+    public function can(User $user, string $key): bool
+    {
+        return (bool) $this->value($user, $key);
+    }
+
+    /**
+     * Check if the user is within a daily usage limit.
+     *
+     * @param int $usedToday  — count of actions taken today
+     */
+    public function withinDailyLimit(User $user, string $key, int $usedToday): bool
+    {
+        $limit = (int) $this->value($user, $key);
+
+        // 0 means disabled (unlimited = -1 or a very large number per your convention)
+        // Convention: 0 = blocked, positive = limit, -1 = unlimited
+        if ($limit < 0) {
+            return true; // unlimited
+        }
+
+        return $usedToday < $limit;
+    }
+
+    /**
+     * Check if the user is within a monthly usage limit.
+     *
+     * @param int $usedThisMonth
+     */
+    public function withinMonthlyLimit(User $user, string $key, int $usedThisMonth): bool
+    {
+        $limit = (int) $this->value($user, $key);
+
+        if ($limit < 0) {
+            return true;
+        }
+
+        return $usedThisMonth < $limit;
+    }
+
+    /**
+     * Get the user's currently active subscription record, if any.
+     */
+    public function getActiveSubscription(User $user): ?Subscription
+    {
+        if ($user->active_subscription_id) {
+            $sub = Subscription::where('id', $user->active_subscription_id)
+                ->where('user_id', $user->id)
+                ->where('status', 'active')
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->first();
+
+            if ($sub) {
+                return $sub;
+            }
+        }
+
+        return Subscription::where('user_id', $user->id)
+            ->where('status', 'active')
+            ->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+            ->latest('expires_at')
+            ->first();
+    }
+
+    /**
+     * Whether the user has an active paid (non-free) subscription.
+     */
+    public function hasPaidSubscription(User $user): bool
+    {
+        $sub = $this->getActiveSubscription($user);
+
+        return $sub !== null && (float) $sub->amount_bdt > 0;
+    }
+
+    /**
+     * Get the active subscription plan for the user.
+     * Uses active_subscription_id if set (precise), falls back to latest active sub.
+     */
+    public function getActivePlan(User $user): ?SubscriptionPlan
+    {
+        // Fast path: no subscription at all
+        if (! $user->subscription_expires_at || $user->subscription_expires_at->isPast()) {
+            return null;
+        }
+
+        return Cache::remember(
+            "user_plan:{$user->id}",
+            now()->addMinutes(5),
+            function () use ($user) {
+                // Use active_subscription_id if set (preferred — exact plan)
+                if ($user->active_subscription_id) {
+                    $sub = \App\Models\Subscription::with('subscriptionPlan')
+                        ->where('id', $user->active_subscription_id)
+                        ->where('user_id', $user->id)
+                        ->where('status', 'active')
+                        ->where('expires_at', '>', now())
+                        ->first();
+
+                    if ($sub?->subscriptionPlan) {
+                        return $sub->subscriptionPlan;
+                    }
+                }
+
+                // Fallback: latest active subscription
+                return \App\Models\Subscription::with('subscriptionPlan')
+                    ->where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->where('expires_at', '>', now())
+                    ->latest('expires_at')
+                    ->first()
+                    ?->subscriptionPlan;
+            }
+        );
+    }
+}
+

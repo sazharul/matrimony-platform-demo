@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" role="img" aria-label="Demo avatar 4">
+  <rect width="120" height="120" fill="hsl(160, 55%, 45%)"/>
+  <circle cx="60" cy="46" r="22" fill="hsl(160, 30%, 88%)"/>
+  <ellipse cx="60" cy="98" rx="34" ry="28" fill="hsl(160, 30%, 88%)"/>
+</svg>

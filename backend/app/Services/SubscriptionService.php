@@ -1,0 +1,276 @@
+<?php
+
+namespace App\Services;
+
+use App\Library\SslCommerz\SslCommerzNotification;
+use App\Models\Subscription;
+use App\Models\SubscriptionPlan;
+use App\Models\User;
+use App\Services\SubscriptionPaymentMailService;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
+
+/**
+ * SubscriptionService — handles SSLCommerz payment initiation and activation.
+ */
+class SubscriptionService
+{
+    public function __construct(
+        private readonly SubscriptionPaymentMailService $paymentMailService,
+    ) {}
+    /**
+     * Initiate a subscription payment via SSLCommerz.
+     *
+     * @return array{payment_url: string, transaction_id: string}
+     * @throws \RuntimeException
+     */
+    public function initiate(User $user, SubscriptionPlan $plan): array
+    {
+        Log::info('[SUBSCRIPTION - Initiate] User ID: ' . $user->id . ' | Plan: ' . $plan->slug);
+
+        if (config('app.demo_mode')) {
+            return $this->initiateDemo($user, $plan);
+        }
+
+        $transactionId = 'MCT-' . strtoupper(Str::random(12)) . '-' . time();
+
+        $subscription = DB::transaction(function () use ($user, $plan, $transactionId): Subscription {
+            return Subscription::create([
+                'user_id' => $user->id,
+                'subscription_plan_id' => $plan->id,
+                'plan' => $plan->plan_type,
+                'amount_bdt' => $plan->price_bdt,
+                'payment_method' => 'sslcommerz',
+                'transaction_id' => $transactionId,
+                'status' => 'pending',
+                'starts_at' => now(),
+                'expires_at' => now()->addDays($plan->getDurationInDays()),
+            ]);
+        });
+
+        $postData = [
+            'total_amount' => $plan->price_bdt,
+            'currency' => 'BDT',
+            'tran_id' => $transactionId,
+            'success_url' => config('sslcommerz.success_url'),
+            'fail_url' => config('sslcommerz.fail_url'),
+            'cancel_url' => config('sslcommerz.cancel_url'),
+            'ipn_url' => config('sslcommerz.ipn_url'),
+            'cus_name' => $user->name,
+            'cus_email' => $user->email,
+            'cus_add1' => 'Bangladesh',
+            'cus_city' => 'Dhaka',
+            'cus_country' => 'Bangladesh',
+            'cus_phone' => '01700000000',
+            'shipping_method' => 'NO',
+            'product_name' => $plan->name,
+            'product_category' => 'Subscription',
+            'product_profile' => 'non-physical-goods',
+            'num_of_item' => 1,
+        ];
+
+        $sslcz = new SslCommerzNotification();
+        $response = $sslcz->makePayment($postData, 'hosted', 'json');
+
+        if (empty($response) || ($response['status'] ?? '') !== 'SUCCESS' || empty($response['GatewayPageURL'])) {
+            $subscription->delete();
+            $errorMsg = $response['failedreason'] ?? 'SSLCommerz initiation failed.';
+            Log::error('[SUBSCRIPTION - Initiate] Failed for User ID: ' . $user->id . ' | Reason: ' . $errorMsg);
+            throw new \RuntimeException($errorMsg);
+        }
+
+        Log::info('[SUBSCRIPTION - Initiate] URL generated for User ID: ' . $user->id . ' | TxID: ' . $transactionId);
+
+        return [
+            'payment_url' => $response['GatewayPageURL'],
+            'transaction_id' => $transactionId,
+        ];
+    }
+
+    /**
+     * Activate subscription after SSLCommerz payment success callback.
+     *
+     * @param array<string, mixed> $callbackData
+     * @throws \RuntimeException
+     */
+    public function activate(array $callbackData): Subscription
+    {
+        $transactionId = $callbackData['tran_id'] ?? '';
+
+        Log::info('[SUBSCRIPTION - Activate] Callback for TxID: ' . $transactionId);
+
+        $subscription = Subscription::with(['user', 'subscriptionPlan'])
+            ->where('transaction_id', $transactionId)
+            ->where('status', 'pending')
+            ->first();
+
+        if (!$subscription) {
+            Log::warning('[SUBSCRIPTION - Activate] Not found or already processed. TxID: ' . $transactionId);
+            throw new \RuntimeException('Subscription record not found.');
+        }
+
+        $sslcz = new SslCommerzNotification();
+        $isValid = $sslcz->orderValidate(
+            $callbackData,
+            $transactionId,
+            (float)$subscription->amount_bdt,
+            'BDT'
+        );
+
+        if (!$isValid) {
+            Log::warning('[SUBSCRIPTION - Activate] Validation failed. TxID: ' . $transactionId);
+            throw new \RuntimeException('Payment validation failed.');
+        }
+
+        $plan = $subscription->subscriptionPlan;
+        $startDate = now();
+        $expireDate = $startDate->copy()->addDays($plan->getDurationInDays());
+
+        DB::transaction(function () use ($subscription, $callbackData, $startDate, $expireDate): void {
+            $subscription->update([
+                'status' => 'active',
+                'payment_method' => $callbackData['card_type'] ?? 'SSLCommerz',
+                'starts_at' => $startDate,
+                'expires_at' => $expireDate,
+            ]);
+
+            // Update user's active plan — new plan becomes the active one immediately
+            $subscription->user->update([
+                'subscription_plan' => $subscription->plan,
+                'subscription_expires_at' => $expireDate,
+                'active_subscription_id' => $subscription->id,
+                'is_active' => true,
+            ]);
+        });
+
+        Cache::forget("user_plan:{$subscription->user_id}");
+
+        $subscription = $subscription->fresh(['user', 'subscriptionPlan']);
+
+        Log::info('[SUBSCRIPTION - Activate] Activated. User ID: ' . $subscription->user_id . ' | Plan: ' . $subscription->plan . ' | Expires: ' . $expireDate);
+
+        $this->paymentMailService->sendPaymentConfirmation($subscription);
+
+        return $subscription;
+    }
+
+    /**
+     * Activate a free (price = 0) subscription directly — no payment gateway needed.
+     * Sets expires_at = null (forever).
+     */
+    public function activateFree(User $user, SubscriptionPlan $plan): Subscription
+    {
+        Log::info('[SUBSCRIPTION - ActivateFree] User ID: ' . $user->id . ' | Plan: ' . $plan->slug);
+
+        $transactionId = 'FREE-' . strtoupper(Str::random(10)) . '-' . $user->id;
+
+        return DB::transaction(function () use ($user, $plan, $transactionId): Subscription {
+            // Expire any existing free (price=0) subscriptions for this user
+            $subscription = Subscription::where('user_id', $user->id)
+                ->where('amount_bdt', 0)
+                ->where('status', 'active')
+                ->first();
+
+            $free_plan_expires = now()->addDays($plan->getDurationInDays());
+
+            if ($subscription) {
+                $user->update([
+                    'subscription_plan' => $plan->plan_type,
+                    'subscription_expires_at' => $free_plan_expires,
+                    'active_subscription_id' => $subscription->id,
+                ]);
+            } else {
+                $subscription = Subscription::create([
+                    'user_id' => $user->id,
+                    'subscription_plan_id' => $plan->id,
+                    'plan' => $plan->plan_type,
+                    'amount_bdt' => 0,
+                    'payment_method' => 'free',
+                    'transaction_id' => $transactionId,
+                    'starts_at' => now(),
+                    'expires_at' => $free_plan_expires, // forever — free plan never expires
+                ]);
+
+
+
+                $user->update([
+                    'subscription_plan' => $plan->plan_type,
+                    'subscription_expires_at' => $free_plan_expires,
+                    'active_subscription_id' => $subscription->id,
+                ]);
+            }
+
+            Cache::forget("user_plan:{$user->id}");
+
+            Log::info('[SUBSCRIPTION - ActivateFree] Activated free plan for User ID: ' . $user->id);
+
+            return $subscription->fresh(['user', 'subscriptionPlan']);
+        });
+    }
+
+    /**
+     * Demo mode — activate subscription immediately without SSLCommerz.
+     *
+     * @return array{payment_url: string, transaction_id: string, demo_mode: bool}
+     */
+    private function initiateDemo(User $user, SubscriptionPlan $plan): array
+    {
+        $transactionId = 'DEMO-' . strtoupper(Str::random(10)) . '-' . time();
+        $frontendUrl = rtrim((string) config('app.frontend_url', 'http://localhost:3000'), '/');
+
+        $subscription = DB::transaction(function () use ($user, $plan, $transactionId): Subscription {
+            $subscription = Subscription::create([
+                'user_id' => $user->id,
+                'subscription_plan_id' => $plan->id,
+                'plan' => $plan->plan_type,
+                'amount_bdt' => $plan->price_bdt,
+                'payment_method' => 'demo',
+                'transaction_id' => $transactionId,
+                'status' => 'pending',
+                'starts_at' => now(),
+                'expires_at' => now()->addDays($plan->getDurationInDays()),
+            ]);
+
+            $expireDate = now()->addDays($plan->getDurationInDays());
+
+            $subscription->update([
+                'status' => 'active',
+                'starts_at' => now(),
+                'expires_at' => $expireDate,
+            ]);
+
+            $user->update([
+                'subscription_plan' => $plan->plan_type,
+                'subscription_expires_at' => $expireDate,
+                'active_subscription_id' => $subscription->id,
+                'is_active' => true,
+            ]);
+
+            Cache::forget("user_plan:{$user->id}");
+
+            return $subscription->fresh(['user', 'subscriptionPlan']);
+        });
+
+        Log::info('[SUBSCRIPTION - Demo] Activated for User ID: ' . $user->id . ' | Plan: ' . $plan->slug);
+
+        return [
+            'payment_url' => $frontendUrl . '/subscription/success?demo=1&tran_id=' . $transactionId,
+            'transaction_id' => $transactionId,
+            'demo_mode' => true,
+        ];
+    }
+
+    /**
+     * Mark a pending subscription as failed / cancelled.
+     */
+    public function markFailed(string $transactionId, string $reason = 'failed'): void
+    {
+        Log::info('[SUBSCRIPTION - MarkFailed] TxID: ' . $transactionId . ' | Reason: ' . $reason);
+
+        Subscription::where('transaction_id', $transactionId)
+            ->where('status', 'pending')
+            ->update(['status' => 'expired']);
+    }
+}

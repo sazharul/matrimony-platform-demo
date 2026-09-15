@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240" fill="none" role="img" aria-label="Groom profile">
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <!-- shirt -->
+    <path fill="#0B0B0B" d="M2 240C4 194 40 172 76 166L100 192L124 166C160 172 196 194 198 240Z"/>
+    <path stroke="#FFFFFF" stroke-width="3.5" d="M76 166L100 192L124 166"/>
+    <path stroke="#FFFFFF" stroke-width="3" d="M100 192V240"/>
+
+    <!-- neck -->
+    <path fill="#FFFFFF" d="M84 128V156C84 168 92 176 100 176C108 176 116 168 116 156V128Z"/>
+    <path stroke="#0B0B0B" stroke-width="2.5" d="M84 128V156C84 168 92 176 100 176C108 176 116 168 116 156V128"/>
+
+    <!-- ears -->
+    <path fill="#FFFFFF" stroke="#0B0B0B" stroke-width="2.5" d="M59 90C49 87 44 96 47 107C49 114 55 118 61 116"/>
+    <path fill="#FFFFFF" stroke="#0B0B0B" stroke-width="2.5" d="M141 90C151 87 156 96 153 107C151 114 145 118 139 116"/>
+
+    <!-- face -->
+    <path fill="#FFFFFF" stroke="#0B0B0B" stroke-width="2.5" d="M56 86C56 51 74 30 100 30C126 30 144 51 144 86C144 121 126 152 100 152C74 152 56 121 56 86Z"/>
+
+    <!-- beard along the jaw -->
+    <path fill="#0B0B0B" d="M58 104C62 131 78 152 100 152C122 152 138 131 142 104C138 117 131 124 121 127C113 129 87 129 79 127C69 124 62 117 58 104Z"/>
+    <!-- sideburns -->
+    <path fill="#0B0B0B" d="M54 70C52 86 53 100 59 110C57 98 57 84 64 71Z"/>
+    <path fill="#0B0B0B" d="M146 70C148 86 147 100 141 110C143 98 143 84 136 71Z"/>
+
+    <!-- hair -->
+    <path fill="#0B0B0B" d="M54 92C46 44 68 20 100 20C132 20 154 44 146 92C144 68 138 56 128 51C110 66 84 58 66 60C58 68 55 78 54 92Z"/>
+    <path stroke="#FFFFFF" stroke-width="4" d="M122 34C110 42 98 52 90 61"/>
+
+    <!-- brows -->
+    <path stroke="#0B0B0B" stroke-width="5" d="M67 77C74 69 86 68 92 74"/>
+    <path stroke="#0B0B0B" stroke-width="5" d="M133 77C126 69 114 68 108 74"/>
+
+    <!-- eyes -->
+    <path fill="#FFFFFF" stroke="#0B0B0B" stroke-width="2" d="M67 89C71 82 88 82 92 89C88 96 71 96 67 89Z"/>
+    <path fill="#FFFFFF" stroke="#0B0B0B" stroke-width="2" d="M108 89C112 82 129 82 133 89C129 96 112 96 108 89Z"/>
+    <circle cx="79.5" cy="89" r="4.2" fill="#0B0B0B"/>
+    <circle cx="120.5" cy="89" r="4.2" fill="#0B0B0B"/>
+
+    <!-- nose -->
+    <path stroke="#0B0B0B" stroke-width="2.4" d="M96 101C94.5 105 93 109 93 111.5C93 114 96 115.5 100 115.5C104 115.5 107 114 107 111.5C107 109 105.5 105 104 101"/>
+
+    <!-- mouth -->
+    <path fill="#FFFFFF" d="M84 136C91 131 109 131 116 136C109 141 91 141 84 136Z"/>
+    <path stroke="#0B0B0B" stroke-width="1.5" d="M86 136H114"/>
+  </g>
+</svg>
